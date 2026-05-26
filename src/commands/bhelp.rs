@@ -13,7 +13,8 @@ const HELP_HTML: &str = concat!(
     "/bchannel <code>&lt;chat_id&gt;</code> — sᴇᴛ ʟᴏɢ ᴅᴇsᴛɪɴᴀᴛɪᴏɴ ᴄʜᴀɴɴᴇʟ\n",
     "/bchannel — sʜᴏᴡ ᴄᴜʀʀᴇɴᴛ ᴄʜᴀɴɴᴇʟ\n",
     "/badd <code>[chat_id]</code> — ᴀᴅᴅ ᴄʜᴀᴛ ᴛᴏ ʟᴏɢɢɪɴɢ\n",
-    "/bdell <code>[chat_id]</code> — ʀᴇᴍᴏᴠᴇ ᴄʜᴀᴛ ғʀᴏᴍ ʟᴏɢɢɪɴɢ",
+    "/bdell <code>[chat_id]</code> — ʀᴇᴍᴏᴠᴇ ᴄʜᴀᴛ ғʀᴏᴍ ʟᴏɢɢɪɴɢ\n",
+    "/btimerdel <code>&lt;id&gt;</code> — ᴅᴇʟᴇᴛᴇ ᴡᴀᴛᴄʜ ᴛɪᴍᴇʀ",
 );
 
 pub async fn handle(bot: Bot, msg: Message) -> ResponseResult<()> {

@@ -4,10 +4,10 @@ use std::time::Duration;
 use chrono::{DateTime, FixedOffset, Utc};
 use sqlx::SqlitePool;
 use teloxide::prelude::*;
-use teloxide::types::ParseMode;
+use teloxide::types::{ChatKind, ParseMode};
 use tracing::{info, warn};
 
-use crate::messages::{chat_link_html, format_duration, user_link_html};
+use crate::messages::{chat_link_html, escape_html, format_duration, user_link_html};
 use crate::state::AppState;
 
 const HTTPS_TME_C: &str = concat!("https", "://t.me/c/");
@@ -24,11 +24,51 @@ struct WatchRow {
     last_notified_at: Option<DateTime<Utc>>,
     last_message_id: Option<i64>,
     created_at: DateTime<Utc>,
+    target_display: Option<String>,
+    chat_display: Option<String>,
 }
 
 fn fmt_datetime_msk(dt: DateTime<Utc>) -> String {
     let msk = FixedOffset::east_opt(3 * 3600).expect("MSK +3");
     dt.with_timezone(&msk).format("%Y-%m-%d %H:%M MSK").to_string()
+}
+
+/// `<a href="tg://user?id=X">Name</a> <code>X</code>`
+/// или просто `<a href="...">X</a>` если имя неизвестно.
+fn user_html(id: i64, display: Option<&str>) -> String {
+    match display.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(name) => format!(
+            "<a href=\"tg://user?id={id}\">{}</a> <code>{id}</code>",
+            escape_html(name)
+        ),
+        None => user_link_html(id),
+    }
+}
+
+/// `<a href="...">Chat Name</a> <code>chat_id</code>`
+/// или стандартный chat_link_html если имя неизвестно.
+fn chat_html(chat_id: i64, display: Option<&str>) -> String {
+    match display.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(title) => {
+            let s = chat_id.to_string();
+            let url = if let Some(rest) = s.strip_prefix("-100") {
+                if let Ok(internal) = rest.parse::<i64>() {
+                    format!("{HTTPS_TME_C}{internal}/1")
+                } else {
+                    let abs = (chat_id as i64).unsigned_abs();
+                    format!("tg://openmessage?chat_id={abs}")
+                }
+            } else {
+                let abs = (chat_id as i64).unsigned_abs();
+                format!("tg://openmessage?chat_id={abs}")
+            };
+            format!(
+                "<a href=\"{url}\">{}</a> <code>{chat_id}</code>",
+                escape_html(title)
+            )
+        }
+        None => chat_link_html(chat_id),
+    }
 }
 
 async fn tick(bot: &Bot, pool: &SqlitePool, admin_id: i64) -> anyhow::Result<()> {
@@ -37,7 +77,8 @@ async fn tick(bot: &Bot, pool: &SqlitePool, admin_id: i64) -> anyhow::Result<()>
         sqlx::query_as::<_, WatchRow>(
             r#"
             SELECT id, owner_user_id, target_user_id, chat_id, timeout_seconds,
-                   last_message_at, last_notified_at, last_message_id, created_at
+                   last_message_at, last_notified_at, last_message_id, created_at,
+                   target_display, chat_display
             FROM watch_timers
             "#,
         )
@@ -56,15 +97,14 @@ async fn tick(bot: &Bot, pool: &SqlitePool, admin_id: i64) -> anyhow::Result<()>
             continue;
         }
 
-        if let Some(notified_at) = row.last_notified_at {
-            let since_notified = now.signed_duration_since(notified_at).num_seconds();
-            if since_notified < row.timeout_seconds {
-                continue;
-            }
+        // Уведомляем только один раз. Сброс происходит когда цель пишет
+        // (on_message обнуляет last_notified_at).
+        if row.last_notified_at.is_some() {
+            continue;
         }
 
-        let user_link = user_link_html(row.target_user_id);
-        let chat_link = chat_link_html(row.chat_id);
+        let user_h = user_html(row.target_user_id, row.target_display.as_deref());
+        let chat_h = chat_html(row.chat_id, row.chat_display.as_deref());
         let elapsed_fmt = format_duration(elapsed.max(0));
         let threshold_fmt = format_duration(row.timeout_seconds);
 
@@ -86,7 +126,7 @@ async fn tick(bot: &Bot, pool: &SqlitePool, admin_id: i64) -> anyhow::Result<()>
         };
 
         let html = format!(
-            "ᴛɪᴍᴇʀ: {user_link} | {chat_link} | ɪɴᴀᴄᴛɪᴠᴇ ≥ {elapsed_fmt} (ᴛʜʀᴇsʜᴏʟᴅ {threshold_fmt}).{last_line}"
+            "ᴛɪᴍᴇʀ: {user_h} | {chat_h} | ɪɴᴀᴄᴛɪᴠᴇ ≥ {elapsed_fmt} (ᴛʜʀᴇsʜᴏʟᴅ {threshold_fmt}).{last_line}"
         );
 
         match bot
@@ -120,18 +160,38 @@ pub async fn on_message(pool: &SqlitePool, msg: &teloxide::types::Message) -> an
     let target_id = u.id.0 as i64;
     let chat_id = msg.chat.id.0;
 
+    // Имя пользователя: first_name + last_name
+    let mut user_display = u.first_name.trim().to_string();
+    if let Some(ln) = &u.last_name {
+        let ln = ln.trim();
+        if !ln.is_empty() {
+            user_display.push(' ');
+            user_display.push_str(ln);
+        }
+    }
+
+    // Название чата
+    let chat_display = match &msg.chat.kind {
+        ChatKind::Public(p) => p.title.as_deref().unwrap_or("").to_string(),
+        ChatKind::Private(_) => user_display.clone(),
+    };
+
     sqlx::query(
         r#"
         UPDATE watch_timers
-        SET last_message_at = datetime('now'),
+        SET last_message_at  = datetime('now'),
             last_notified_at = NULL,
-            updated_at = datetime('now'),
-            last_message_id = ?
+            updated_at       = datetime('now'),
+            last_message_id  = ?,
+            target_display   = ?,
+            chat_display     = ?
         WHERE target_user_id = ?
           AND chat_id = ?
         "#,
     )
     .bind(msg.id.0 as i64)
+    .bind(&user_display)
+    .bind(&chat_display)
     .bind(target_id)
     .bind(chat_id)
     .execute(pool)

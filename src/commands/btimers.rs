@@ -2,7 +2,7 @@ use chrono::{DateTime, FixedOffset, Utc};
 use teloxide::prelude::*;
 use teloxide::types::{CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, ParseMode};
 
-use crate::messages::{chat_link_html, format_duration, send_html, user_link_html};
+use crate::messages::{chat_link_html, escape_html, format_duration, send_html, user_link_html};
 use crate::state::AppState;
 
 const PAGE_SIZE: i64 = 5;
@@ -17,6 +17,8 @@ struct TimerRow {
     last_message_at: Option<DateTime<Utc>>,
     last_message_id: Option<i64>,
     created_at: DateTime<Utc>,
+    target_display: Option<String>,
+    chat_display: Option<String>,
 }
 
 fn fmt_msk(dt: DateTime<Utc>) -> String {
@@ -51,7 +53,8 @@ async fn fetch_page(
     let rows: Vec<TimerRow> = sqlx::query_as(
         r#"
         SELECT id, target_user_id, chat_id, timeout_seconds,
-               last_message_at, last_message_id, created_at
+               last_message_at, last_message_id, created_at,
+               target_display, chat_display
         FROM watch_timers
         WHERE owner_user_id = ?
         ORDER BY id
@@ -79,8 +82,33 @@ fn build_html(rows: &[TimerRow], page: i64, total: i64) -> String {
     ];
 
     for r in rows {
-        let user = user_link_html(r.target_user_id);
-        let chat = chat_link_html(r.chat_id);
+        let user = match r.target_display.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(name) => format!(
+                "<a href=\"tg://user?id={id}\">{}</a> <code>{id}</code>",
+                escape_html(name),
+                id = r.target_user_id
+            ),
+            None => user_link_html(r.target_user_id),
+        };
+        let chat = match r.chat_display.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(title) => {
+                let s = r.chat_id.to_string();
+                let url = if let Some(rest) = s.strip_prefix("-100") {
+                    rest.parse::<i64>()
+                        .ok()
+                        .map(|i| format!("{HTTPS_TME_C}{i}/1"))
+                        .unwrap_or_else(|| format!("tg://openmessage?chat_id={}", r.chat_id.unsigned_abs()))
+                } else {
+                    format!("tg://openmessage?chat_id={}", r.chat_id.unsigned_abs())
+                };
+                format!(
+                    "<a href=\"{url}\">{}</a> <code>{}</code>",
+                    escape_html(title),
+                    r.chat_id
+                )
+            }
+            None => chat_link_html(r.chat_id),
+        };
         let thr = format_duration(r.timeout_seconds);
         let dt = r.last_message_at.unwrap_or(r.created_at);
         let last = match r.last_message_id {

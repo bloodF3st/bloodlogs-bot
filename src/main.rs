@@ -36,6 +36,8 @@ enum Command {
     Badd(String),
     #[command(description = "remove chat from logging whitelist")]
     Bdell(String),
+    #[command(description = "delete watch timer by id")]
+    Btimerdel(String),
     #[command(description = "command list")]
     Bhelp,
 }
@@ -49,12 +51,19 @@ async fn on_command(bot: Bot, msg: Message, cmd: Command, state: AppState) -> Re
         Command::Bchannel(args) => commands::bchannel::handle(bot, msg, args, state).await,
         Command::Badd(args) => commands::badd::handle(bot, msg, args, state).await,
         Command::Bdell(args) => commands::bdell::handle(bot, msg, args, state).await,
+        Command::Btimerdel(args) => commands::btimerdel::handle(bot, msg, args, state).await,
         Command::Bhelp => commands::bhelp::handle(bot, msg).await,
     }
 }
 
 async fn on_message(_bot: Bot, msg: Message, state: AppState) -> ResponseResult<()> {
     let chat_id = msg.chat.id.0;
+
+    // Watch-таймеры обновляются всегда — независимо от whitelist логирования.
+    // Бот получает сообщение только если он в чате, этого достаточно для трекинга.
+    if let Err(e) = jobs::watch::on_message(state.db.as_ref(), &msg).await {
+        tracing::warn!("watch on_message: {e:#}");
+    }
 
     let in_whitelist = sqlx::query_scalar::<_, i64>(
         "SELECT 1 FROM logged_chats WHERE chat_id = ?",
@@ -85,10 +94,6 @@ async fn on_message(_bot: Bot, msg: Message, state: AppState) -> ResponseResult<
         {
             tracing::warn!("chat_activity upsert: {e:#}");
         }
-    }
-
-    if let Err(e) = jobs::watch::on_message(state.db.as_ref(), &msg).await {
-        tracing::warn!("watch on_message: {e:#}");
     }
 
     if let Some(html) = messages::format_log_html(&msg) {

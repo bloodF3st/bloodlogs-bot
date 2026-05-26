@@ -5,4 +5,5 @@ pub mod bdell;
 pub mod bhelp;
 pub mod btimer;
 pub mod btimerclear;
+pub mod btimerdel;
 pub mod btimers;
