@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use teloxide::{
     dispatching::{Dispatcher, UpdateFilterExt, UpdateHandler},
     prelude::*,
-    types::{CallbackQuery, Me, Message, ParseMode, Update},
+    types::{AllowedUpdate, CallbackQuery, ChatKind, ChatMemberKind, ChatMemberUpdated, Me, Message, ParseMode, Update},
     update_listeners,
     utils::command::BotCommands,
     RequestError,
@@ -110,6 +110,50 @@ async fn on_message(bot: Bot, msg: Message, state: AppState) -> ResponseResult<(
     Ok(())
 }
 
+async fn on_my_chat_member(bot: Bot, upd: ChatMemberUpdated, state: AppState) -> ResponseResult<()> {
+    let was_member = !matches!(
+        upd.old_chat_member.kind,
+        ChatMemberKind::Left | ChatMemberKind::Banned(_)
+    );
+    let is_member = !matches!(
+        upd.new_chat_member.kind,
+        ChatMemberKind::Left | ChatMemberKind::Banned(_)
+    );
+
+    if was_member || !is_member {
+        return Ok(());
+    }
+
+    let chat_id = upd.chat.id.0;
+    state.chat_admin_cache.lock().await.remove(&chat_id);
+
+    if !admin_in_chat(&bot, &state, chat_id).await {
+        return Ok(());
+    }
+
+    let chat_name = match &upd.chat.kind {
+        ChatKind::Public(p) => p.title.clone().unwrap_or_default(),
+        ChatKind::Private(_) => String::new(),
+    };
+
+    let chat_link = messages::chat_link_html(chat_id);
+    let html = if chat_name.is_empty() {
+        format!("{chat_link} ʟᴏɢɢɪɴɢ sᴛᴀʀᴛᴇᴅ")
+    } else {
+        format!(
+            "<b>{}</b> ʟᴏɢɢɪɴɢ sᴛᴀʀᴛᴇᴅ · {chat_link}",
+            messages::escape_html(&chat_name)
+        )
+    };
+
+    let _ = bot
+        .send_message(ChatId(state.admin_id()), &html)
+        .parse_mode(ParseMode::Html)
+        .await;
+
+    Ok(())
+}
+
 fn schema() -> UpdateHandler<RequestError> {
     let cmd_handler = Update::filter_message()
         .filter(|msg: Message, cfg: Arc<Config>| {
@@ -130,11 +174,14 @@ fn schema() -> UpdateHandler<RequestError> {
         })
         .endpoint(commands::btimers::handle_callback);
 
+    let join_handler = Update::filter_my_chat_member().endpoint(on_my_chat_member);
+
     let msg_handler = Update::filter_message().endpoint(on_message);
 
     dptree::entry()
         .branch(callback_handler)
         .branch(cmd_handler)
+        .branch(join_handler)
         .branch(msg_handler)
 }
 
@@ -224,7 +271,14 @@ async fn main() -> anyhow::Result<()> {
                 break;
             }
             _ = async {
-                let listener = update_listeners::polling_default(bot.clone()).await;
+                let listener = update_listeners::Polling::builder(bot.clone())
+                    .timeout(Duration::from_secs(10))
+                    .allowed_updates(vec![
+                        AllowedUpdate::Message,
+                        AllowedUpdate::CallbackQuery,
+                        AllowedUpdate::MyChatMember,
+                    ])
+                    .build();
                 let mut dispatcher = Dispatcher::builder(bot.clone(), schema())
                     .dependencies(dptree::deps![state.clone(), cfg.clone()])
                     .default_handler(|_upd: std::sync::Arc<Update>| async move {})

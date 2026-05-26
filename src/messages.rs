@@ -73,7 +73,7 @@ fn msg_link(chat_id: i64, msg_id: i32) -> Option<String> {
     Some(format!("{HTTPS_TME_C}{internal}/{msg_id}"))
 }
 
-fn escape_html(s: &str) -> String {
+pub fn escape_html(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
