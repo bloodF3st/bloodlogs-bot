@@ -195,7 +195,8 @@ async fn tick(bot: &Bot, pool: &SqlitePool, admin_id: i64) -> anyhow::Result<()>
         };
 
         let html = format!(
-            "ᴛɪᴍᴇʀ: {user_h} | {chat_h} | ɪɴᴀᴄᴛɪᴠᴇ ≥ {elapsed_fmt} (ᴛʜʀᴇsʜᴏʟᴅ {threshold_fmt}).{last_line}"
+            "ᴛɪᴍᴇʀ #{id}: {user_h} | {chat_h} | ɪɴᴀᴄᴛɪᴠᴇ ≥ {elapsed_fmt} (ᴛʜʀᴇsʜᴏʟᴅ {threshold_fmt}).{last_line}",
+            id = row.id,
         );
 
         match bot
