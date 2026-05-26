@@ -6,10 +6,10 @@ use crate::messages::send_html;
 const HELP_HTML: &str = concat!(
     "<b>ʙʟᴏᴏᴅʟᴏɢs</b> — <a href=\"https://t.me/blxfe\">@blxfe</a>\n\n",
     "/btimer <code>&lt;user_id&gt; &lt;chat_id&gt; &lt;time&gt;</code> — ɪɴᴀᴄᴛɪᴠɪᴛʏ ᴛɪᴍᴇʀ\n",
-    "/btimer del <code>&lt;id&gt;</code> — ʀᴇᴍᴏᴠᴇ ᴛɪᴍᴇʀ\n\n",
+    "/btimer del <code>&lt;id&gt;</code> — ʀᴇᴍᴏᴠᴇ ᴛɪᴍᴇʀ\n",
     "/balltimer <code>&lt;lookback&gt; &lt;threshold&gt;</code> — ᴛɪᴍᴇʀ ғᴏʀ ᴀʟʟ ᴀᴄᴛɪᴠᴇ ᴜsᴇʀs ɪɴ ᴛʜɪs ᴄʜᴀᴛ\n",
-    "/btimerclear — ʀᴇᴍᴏᴠᴇ ᴀʟʟ ᴛɪᴍᴇʀs ɪɴ ᴛʜɪs ᴄʜᴀᴛ\n\n",
-    "/btimers — ʟɪsᴛ ᴀᴄᴛɪᴠᴇ ᴛɪᴍᴇʀs\n\n",
+    "/btimerclear — ʀᴇᴍᴏᴠᴇ ᴀʟʟ ᴛɪᴍᴇʀs ɪɴ ᴛʜɪs ᴄʜᴀᴛ\n",
+    "/btimers — ʟɪsᴛ ᴀᴄᴛɪᴠᴇ ᴛɪᴍᴇʀs\n",
     "/bchannel <code>&lt;chat_id&gt;</code> — sᴇᴛ ʟᴏɢ ᴅᴇsᴛɪɴᴀᴛɪᴏɴ ᴄʜᴀɴɴᴇʟ\n",
     "/bchannel — sʜᴏᴡ ᴄᴜʀʀᴇɴᴛ ᴄʜᴀɴɴᴇʟ",
 );
