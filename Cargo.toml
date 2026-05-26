@@ -1,0 +1,22 @@
+[package]
+name = "bloodlogs-bot"
+version = "0.1.0"
+edition = "2021"
+description = "bloodLogs — Telegram Bot API (token), log relay + inactivity timers"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+dotenvy = "0.15"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "migrate", "macros", "chrono"] }
+teloxide = { version = "0.12", default-features = false, features = ["macros", "rustls", "auto-send"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+strip = true
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
