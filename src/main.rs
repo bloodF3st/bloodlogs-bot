@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use teloxide::{
     dispatching::{Dispatcher, UpdateFilterExt, UpdateHandler},
     prelude::*,
-    types::{Me, Message, ParseMode, Update},
+    types::{CallbackQuery, Me, Message, ParseMode, Update},
     update_listeners,
     utils::command::BotCommands,
     RequestError,
@@ -30,10 +30,10 @@ enum Command {
     Balltimer(String),
     #[command(description = "clear all timers in this chat")]
     Btimerclear,
+    #[command(description = "list active timers")]
+    Btimers,
     #[command(description = "set log destination channel")]
     Bchannel(String),
-    #[command(description = "list active timers")]
-    Logs,
     #[command(description = "command list")]
     Bhelp,
 }
@@ -43,8 +43,8 @@ async fn on_command(bot: Bot, msg: Message, cmd: Command, state: AppState) -> Re
         Command::Btimer(args) => commands::btimer::handle(bot, msg, args, state).await,
         Command::Balltimer(args) => commands::balltimer::handle(bot, msg, args, state).await,
         Command::Btimerclear => commands::btimerclear::handle(bot, msg, state).await,
+        Command::Btimers => commands::btimers::handle(bot, msg, state).await,
         Command::Bchannel(args) => commands::bchannel::handle(bot, msg, args, state).await,
-        Command::Logs => commands::logs::handle(bot, msg, state).await,
         Command::Bhelp => commands::bhelp::handle(bot, msg).await,
     }
 }
@@ -123,9 +123,17 @@ fn schema() -> UpdateHandler<RequestError> {
         })
         .endpoint(on_command);
 
+    let callback_handler = Update::filter_callback_query()
+        .filter(|q: CallbackQuery, cfg: Arc<Config>| {
+            q.from.id.0 == cfg.admin_id as u64
+                && q.data.as_deref().map_or(false, |d| d.starts_with("btimers:"))
+        })
+        .endpoint(commands::btimers::handle_callback);
+
     let msg_handler = Update::filter_message().endpoint(on_message);
 
     dptree::entry()
+        .branch(callback_handler)
         .branch(cmd_handler)
         .branch(msg_handler)
 }

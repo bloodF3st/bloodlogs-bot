@@ -34,6 +34,9 @@ pub async fn run(
                     tracing::warn!("log relay: flood wait {}s", d.as_secs());
                     tokio::time::sleep(d).await;
                 }
+                Err(RequestError::InvalidJson { raw, .. }) if raw.contains("\"ok\":true") => {
+                    break;
+                }
                 Err(e) => {
                     let err_str = e.to_string();
                     tracing::warn!("log relay to {dest}: {err_str}");
