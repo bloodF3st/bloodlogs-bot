@@ -4,7 +4,7 @@ use std::time::Duration;
 use chrono::{DateTime, FixedOffset, Utc};
 use sqlx::SqlitePool;
 use teloxide::prelude::*;
-use teloxide::types::{ChatKind, ParseMode};
+use teloxide::types::{ChatId, ChatKind, ParseMode, UserId};
 use tracing::{info, warn};
 
 use crate::messages::{chat_link_html, escape_html, format_duration, user_link_html};
@@ -71,6 +71,71 @@ fn chat_html(chat_id: i64, display: Option<&str>) -> String {
     }
 }
 
+/// Возвращает (target_display, chat_display).
+/// Если поля уже заполнены в БД — возвращает их.
+/// Иначе пробует getChatMember + getChat, сохраняет результат.
+async fn resolve_display_names(
+    bot: &Bot,
+    pool: &SqlitePool,
+    row: &WatchRow,
+) -> (Option<String>, Option<String>) {
+    let target = row.target_display.clone();
+    let chat = row.chat_display.clone();
+
+    let need_target = target.as_deref().map(str::trim).unwrap_or("").is_empty();
+    let need_chat = chat.as_deref().map(str::trim).unwrap_or("").is_empty();
+
+    if !need_target && !need_chat {
+        return (target, chat);
+    }
+
+    let fetched_target = if need_target {
+        bot.get_chat_member(ChatId(row.chat_id), UserId(row.target_user_id as u64))
+            .await
+            .ok()
+            .map(|m| {
+                let u = &m.user;
+                let mut s = u.first_name.trim().to_string();
+                if let Some(ln) = &u.last_name {
+                    let ln = ln.trim();
+                    if !ln.is_empty() {
+                        s.push(' ');
+                        s.push_str(ln);
+                    }
+                }
+                s
+            })
+            .filter(|s| !s.is_empty())
+    } else {
+        target.clone()
+    };
+
+    let fetched_chat = if need_chat {
+        bot.get_chat(ChatId(row.chat_id))
+            .await
+            .ok()
+            .and_then(|c| c.title().map(str::to_string))
+            .filter(|s| !s.is_empty())
+    } else {
+        chat.clone()
+    };
+
+    // Сохраняем что удалось получить
+    if fetched_target.is_some() || fetched_chat.is_some() {
+        let _ = sqlx::query(
+            "UPDATE watch_timers SET target_display = COALESCE(?, target_display), \
+             chat_display = COALESCE(?, chat_display) WHERE id = ?",
+        )
+        .bind(fetched_target.as_deref())
+        .bind(fetched_chat.as_deref())
+        .bind(row.id)
+        .execute(pool)
+        .await;
+    }
+
+    (fetched_target.or(target), fetched_chat.or(chat))
+}
+
 async fn tick(bot: &Bot, pool: &SqlitePool, admin_id: i64) -> anyhow::Result<()> {
     let rows: Vec<WatchRow> = tokio::time::timeout(
         Duration::from_secs(25),
@@ -103,8 +168,12 @@ async fn tick(bot: &Bot, pool: &SqlitePool, admin_id: i64) -> anyhow::Result<()>
             continue;
         }
 
-        let user_h = user_html(row.target_user_id, row.target_display.as_deref());
-        let chat_h = chat_html(row.chat_id, row.chat_display.as_deref());
+        // Если имена неизвестны — пробуем получить через Bot API и сохранить.
+        let (target_display, chat_display) =
+            resolve_display_names(bot, pool, &row).await;
+
+        let user_h = user_html(row.target_user_id, target_display.as_deref());
+        let chat_h = chat_html(row.chat_id, chat_display.as_deref());
         let elapsed_fmt = format_duration(elapsed.max(0));
         let threshold_fmt = format_duration(row.timeout_seconds);
 
