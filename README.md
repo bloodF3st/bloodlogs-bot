@@ -1,43 +1,43 @@
 # bloodLogs
 
-Telegram bot for message logging and inactivity timers.
+Telegram-бот для логирования сообщений и таймеров неактивности.
 
-Logs all messages from chats where you are present. Sends logs to a designated channel. Notifies when a user has been inactive longer than a set threshold.
+Логирует все сообщения из чатов, где ты присутствуешь. Отправляет логи в указанный канал. Уведомляет, если отслеживаемый пользователь молчит дольше заданного порога.
 
-## How it works
+## Как это работает
 
-- Bot is added to group chats
-- On every message it checks whether your Telegram account (`ADMIN_ID`) is a member of that chat
-- If yes — logs the message (sender, chat, text/media label, timestamp MSK) to the log channel
-- All commands are accepted only from `ADMIN_ID`; everyone else is completely ignored
-- Inactivity timers run in background and notify you when a tracked user goes silent
+- Бот добавляется в группы
+- На каждое сообщение проверяет, является ли `ADMIN_ID` членом этого чата
+- Если да — логирует сообщение (отправитель, чат, текст/метка медиа, время MSK) в лог-канал
+- Все команды принимаются только от `ADMIN_ID`; остальные полностью игнорируются без ответов
+- Таймеры неактивности работают в фоне и присылают уведомление, когда отслеживаемый юзер замолчал
 
-## BotFather setup
+## Настройка в BotFather
 
-1. Open [@BotFather](https://t.me/BotFather) → `/newbot`
-2. Set name and username
-3. Copy the token → `BOT_TOKEN` in `.env`
-4. `/setprivacy` → select your bot → **Disable**
-   This is required so the bot can read all messages in groups, not just commands
-5. `/setjoingroups` → **Enable** (optional, lets users add bot via link)
+1. Открыть [@BotFather](https://t.me/BotFather) → `/newbot`
+2. Задать имя и username
+3. Скопировать токен → `BOT_TOKEN` в `.env`
+4. `/setprivacy` → выбрать своего бота → **Disable**
+   Обязательно, иначе бот не будет видеть сообщения в группах, только команды
+5. `/setjoingroups` → **Enable** (опционально, позволяет добавлять бота по ссылке)
 
-## Configuration
+## Настройка
 
-Copy `.env.example` to `.env` and fill in:
+Скопировать `.env.example` в `.env` и заполнить:
 
 ```
-BOT_TOKEN=123456:ABC-token-from-BotFather
-ADMIN_ID=your_telegram_user_id
+BOT_TOKEN=123456:ABC-токен-из-BotFather
+ADMIN_ID=твой_числовой_telegram_id
 DATABASE_URL=sqlite:data/bloodlogs.db
 ```
 
-`ADMIN_ID` — your numeric Telegram user ID. Get it from [@userinfobot](https://t.me/userinfobot).
+`ADMIN_ID` — числовой Telegram ID. Узнать можно у [@userinfobot](https://t.me/userinfobot).
 
-## Running
+## Запуск
 
-### From binary (recommended)
+### Из бинарника (рекомендуется)
 
-Download the latest binary from [Releases](../../releases), put it next to `.env`:
+Скачать последний бинарник из [Releases](../../releases), положить рядом с `.env`:
 
 ```
 bloodlogs-bot
@@ -48,7 +48,7 @@ bloodlogs-bot
 ./bloodlogs-bot
 ```
 
-### systemd service
+### systemd-сервис
 
 ```ini
 [Unit]
@@ -71,61 +71,60 @@ WantedBy=multi-user.target
 systemctl enable --now bloodlogs-bot
 ```
 
-### From source
+### Из исходников
 
 ```sh
 cargo build --release
 ./target/release/bloodlogs-bot
 ```
 
-Requires Rust 1.75+.
+Требуется Rust 1.75+.
 
-## Commands
+## Команды
 
-All commands are admin-only.
+Все команды — только для `ADMIN_ID`.
 
-| Command | Description |
+| Команда | Описание |
 |---|---|
-| `/bchannel <chat_id>` | Set the channel where logs are sent |
-| `/bchannel` | Show current log channel |
-| `/btimer <user_id> <chat_id> <time>` | Set inactivity timer for a user in a chat |
-| `/btimer del <id>` | Delete a timer by ID |
-| `/balltimer <lookback> <threshold>` | Set timers for all users active in this chat within `lookback` window |
-| `/btimerclear` | Delete all timers in the current chat |
-| `/logs` | List all active timers |
-| `/bhelp` | Command reference |
+| `/bchannel <chat_id>` | Установить канал для отправки логов |
+| `/bchannel` | Показать текущий лог-канал |
+| `/btimer <user_id> <chat_id> <время>` | Таймер неактивности для юзера в чате |
+| `/btimer del <id>` | Удалить таймер по ID |
+| `/balltimer <lookback> <threshold>` | Таймеры для всех активных юзеров этого чата за период `lookback` |
+| `/btimerclear` | Удалить все таймеры в текущем чате |
+| `/logs` | Список активных таймеров |
+| `/bhelp` | Справка по командам |
 
-Time format: `30s`, `5m`, `2h`, `1d`. Combinations: `1h30m`, `2d12h`.
+Формат времени: `30s`, `5m`, `2h`, `1d`. Комбинации: `1h30m`, `2d12h`.
 
-## Logging
+## Что логируется
 
-What gets logged:
-- Regular text messages → blockquote with text
-- Media with caption → `[PHOTO/VIDEO/…]` + blockquote with caption
-- Media without caption → `[PHOTO]`, `[VIDEO]`, `[GIF]`, `[STICKER]`, etc.
-- New member joined / member left
-- Sender name + ID (clickable), chat name + ID (clickable link to message), timestamp MSK
+- Текстовые сообщения → цитата с текстом
+- Медиа с подписью → `[PHOTO/VIDEO/…]` + цитата с подписью
+- Медиа без подписи → `[PHOTO]`, `[VIDEO]`, `[GIF]`, `[STICKER]` и т.д.
+- Вступление в чат / выход из чата
+- Имя + ID отправителя (кликабельно), название + ID чата (ссылка на сообщение), время MSK
 
-What is NOT logged:
-- Chats where `ADMIN_ID` is not a member
-- Messages that arrive faster than 500 ms per chat (flood protection)
+Что **не** логируется:
+- Чаты, в которых нет `ADMIN_ID`
+- Сообщения, пришедшие быстрее 500 мс с предыдущего в том же чате (защита от флуда)
 
-## Inactivity timers
+## Таймеры неактивности
 
-Timer fires when a tracked user has not sent any message in `chat_id` for longer than `threshold`.
+Таймер срабатывает, когда отслеживаемый юзер не писал в `chat_id` дольше `threshold`.
 
 ```
 /btimer 123456789 -1001234567890 2h
 ```
 
-Fires every `threshold` interval until the user speaks again. Once the user sends a message, the timer resets and stops firing.
+Продолжает срабатывать каждые `threshold` до тех пор, пока юзер снова не напишет. Как только сообщение приходит — таймер сбрасывается.
 
-`/balltimer 55m 1h` — sets a 1h timer for every user who wrote something in the last 55 minutes in the current chat. One timer per user per chat; re-running updates the threshold.
+`/balltimer 55m 1h` — установить таймер 1h для всех, кто писал в этом чате за последние 55 минут. Один таймер на юзера на чат; повторный вызов обновляет порог.
 
-## Notifications
+## Уведомления
 
-On start: `ʙʟᴏᴏᴅʟᴏɢs ᴏɴʟɪɴᴇ` (first launch) or `ʙʟᴏᴏᴅʟᴏɢs ʀᴇsᴛᴀʀᴛᴇᴅ`.
+При запуске: `ʙʟᴏᴏᴅʟᴏɢs ᴏɴʟɪɴᴇ` (первый запуск) или `ʙʟᴏᴏᴅʟᴏɢs ʀᴇsᴛᴀʀᴛᴇᴅ`.
 
-If the log channel becomes unreachable (bot removed, channel deleted): DM to admin with the error and `/bchannel` hint.
+Если лог-канал стал недоступен (бота удалили, канал удалён): DM администратору с ошибкой и подсказкой `/bchannel`.
 
-If the long-poll connection drops more than 5 times in 60 seconds: bot exits with code 1 so systemd restarts it.
+Если long-poll падает более 5 раз за 60 секунд: бот выходит с кодом 1, systemd перезапускает его.
