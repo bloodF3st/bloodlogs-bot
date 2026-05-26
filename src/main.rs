@@ -19,7 +19,6 @@ use teloxide::{
 use config::Config;
 use state::AppState;
 
-const LOG_COOLDOWN: Duration = Duration::from_millis(500);
 const ADMIN_CACHE_TTL: Duration = Duration::from_secs(300);
 
 #[derive(BotCommands, Clone, Debug)]
@@ -105,40 +104,7 @@ async fn on_message(bot: Bot, msg: Message, state: AppState) -> ResponseResult<(
     }
 
     if let Some(html) = messages::format_log_html(&msg) {
-        let should_log = {
-            let mut map = state.log_cooldown.lock().await;
-            let now = Instant::now();
-            let ok = map
-                .get(&chat_id)
-                .map_or(true, |t| now.duration_since(*t) >= LOG_COOLDOWN);
-            if ok {
-                map.insert(chat_id, now);
-            }
-            ok
-        };
-
-        if should_log {
-            if let Ok(Some(dest)) = commands::bchannel::get_log_channel(state.db.as_ref()).await {
-                if let Err(e) = bot
-                    .send_message(ChatId(dest), &html)
-                    .parse_mode(ParseMode::Html)
-                    .await
-                {
-                    let err_str = e.to_string();
-                    tracing::warn!("log relay to {dest}: {err_str}");
-                    if err_str.contains("Forbidden") || err_str.contains("chat not found") {
-                        let _ = bot
-                            .send_message(
-                                ChatId(state.admin_id()),
-                                &format!(
-                                    "ʟᴏɢ ᴄʜᴀɴɴᴇʟ {dest} ᴜɴʀᴇᴀᴄʜᴀʙʟᴇ: {err_str}\nᴜsᴇ /bchannel ᴛᴏ ʀᴇsᴇᴛ."
-                                ),
-                            )
-                            .await;
-                    }
-                }
-            }
-        }
+        let _ = state.log_tx.send(html);
     }
 
     Ok(())
@@ -200,11 +166,19 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("DB migrate: {e}"))?;
 
     let pool = Arc::new(pool);
-    let state = AppState::new(pool, cfg.clone());
+
+    let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let state = AppState::new(pool, cfg.clone(), log_tx);
 
     let bot = Bot::new(cfg.bot_token.clone());
 
     jobs::watch::spawn_watch_supervisor(bot.clone(), &state);
+    tokio::spawn(jobs::relay::run(
+        bot.clone(),
+        state.db.clone(),
+        state.admin_id(),
+        log_rx,
+    ));
 
     let admin_chat = ChatId(cfg.admin_id);
 

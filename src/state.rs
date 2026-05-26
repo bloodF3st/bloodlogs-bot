@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use sqlx::SqlitePool;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Mutex;
 
 use crate::config::Config;
@@ -11,17 +12,17 @@ use crate::config::Config;
 pub struct AppState {
     pub db: Arc<SqlitePool>,
     pub cfg: Arc<Config>,
-    pub log_cooldown: Arc<Mutex<HashMap<i64, Instant>>>,
     pub chat_admin_cache: Arc<Mutex<HashMap<i64, (bool, Instant)>>>,
+    pub log_tx: UnboundedSender<String>,
 }
 
 impl AppState {
-    pub fn new(db: Arc<SqlitePool>, cfg: Arc<Config>) -> Self {
+    pub fn new(db: Arc<SqlitePool>, cfg: Arc<Config>, log_tx: UnboundedSender<String>) -> Self {
         Self {
             db,
             cfg,
-            log_cooldown: Arc::new(Mutex::new(HashMap::new())),
             chat_admin_cache: Arc::new(Mutex::new(HashMap::new())),
+            log_tx,
         }
     }
 
