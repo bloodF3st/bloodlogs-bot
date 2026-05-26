@@ -1,0 +1,172 @@
+use teloxide::prelude::*;
+use teloxide::types::Message;
+
+use crate::messages::{chat_link_html, format_duration, parse_duration, send_html, user_link_html};
+use crate::state::AppState;
+
+pub async fn handle(bot: Bot, msg: Message, args: String, state: AppState) -> ResponseResult<()> {
+    let owner_id = msg.from().map(|u| u.id.0 as i64).unwrap_or(0);
+    let a = args.trim();
+
+    if a.is_empty() {
+        send_html(
+            &bot,
+            msg.chat.id,
+            "ᴜsᴀɢᴇ: /btimer <user_id> <chat_id> <time> · /btimer del <id>",
+        )
+        .await;
+        return Ok(());
+    }
+
+    if a.starts_with("del")
+        && (a.len() == 3 || a.as_bytes().get(3).map_or(false, |b| b.is_ascii_whitespace()))
+    {
+        let rest = a[3..].trim();
+        if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
+            send_html(
+                &bot,
+                msg.chat.id,
+                "ᴜsᴀɢᴇ: /btimer <user_id> <chat_id> <time> · /btimer del <id>",
+            )
+            .await;
+            return Ok(());
+        }
+        let id: i64 = rest.parse().unwrap_or(0);
+        match delete_timer(&state, owner_id, id).await {
+            Ok(true) => {
+                send_html(&bot, msg.chat.id, &format!("ᴛɪᴍᴇʀ {id} ᴅᴇʟᴇᴛᴇᴅ.")).await;
+            }
+            Ok(false) => {
+                send_html(&bot, msg.chat.id, "ᴛɪᴍᴇʀ ɴᴏᴛ ғᴏᴜɴᴅ.").await;
+            }
+            Err(e) => {
+                tracing::warn!("btimer del db: {e:#}");
+                send_html(&bot, msg.chat.id, "ᴛɪᴍᴇʀ ɴᴏᴛ ғᴏᴜɴᴅ.").await;
+            }
+        }
+        return Ok(());
+    }
+
+    let parts: Vec<&str> = a.split_whitespace().collect();
+    if parts.len() != 3 {
+        send_html(
+            &bot,
+            msg.chat.id,
+            "ᴜsᴀɢᴇ: /btimer <user_id> <chat_id> <time> · /btimer del <id>",
+        )
+        .await;
+        return Ok(());
+    }
+
+    let target_user_id: i64 = match parts[0].parse() {
+        Ok(v) => v,
+        Err(_) => {
+            send_html(
+                &bot,
+                msg.chat.id,
+                "ᴜsᴀɢᴇ: /btimer <user_id> <chat_id> <time> · /btimer del <id>",
+            )
+            .await;
+            return Ok(());
+        }
+    };
+    let chat_id: i64 = match parts[1].parse() {
+        Ok(v) => v,
+        Err(_) => {
+            send_html(
+                &bot,
+                msg.chat.id,
+                "ᴜsᴀɢᴇ: /btimer <user_id> <chat_id> <time> · /btimer del <id>",
+            )
+            .await;
+            return Ok(());
+        }
+    };
+    let timeout_seconds = match parse_duration(parts[2]) {
+        Ok(s) => s,
+        Err(_) => {
+            send_html(
+                &bot,
+                msg.chat.id,
+                "ᴜsᴀɢᴇ: /btimer <user_id> <chat_id> <time> · /btimer del <id>",
+            )
+            .await;
+            return Ok(());
+        }
+    };
+
+    match upsert_timer(&state, owner_id, target_user_id, chat_id, timeout_seconds).await {
+        Ok((id, is_new)) => {
+            let user_link = user_link_html(target_user_id);
+            let chat_link = chat_link_html(chat_id);
+            let threshold = format_duration(timeout_seconds);
+            if is_new {
+                send_html(
+                    &bot,
+                    msg.chat.id,
+                    &format!("ᴛɪᴍᴇʀ #{id} · {user_link} | {chat_link} | ᴛʜʀᴇsʜᴏʟᴅ {threshold}."),
+                )
+                .await;
+            } else {
+                send_html(
+                    &bot,
+                    msg.chat.id,
+                    &format!("ᴛɪᴍᴇʀ ᴜᴘᴅᴀᴛᴇᴅ: {user_link} | {chat_link} | {threshold}."),
+                )
+                .await;
+            }
+        }
+        Err(e) => {
+            tracing::warn!("btimer upsert db: {e:#}");
+            send_html(&bot, msg.chat.id, "ᴅʙ ᴇʀʀᴏʀ.").await;
+        }
+    }
+    Ok(())
+}
+
+async fn upsert_timer(
+    state: &AppState,
+    owner_id: i64,
+    target_user_id: i64,
+    chat_id: i64,
+    timeout_seconds: i64,
+) -> anyhow::Result<(i64, bool)> {
+    let already: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM watch_timers WHERE owner_user_id = ? AND target_user_id = ? AND chat_id = ?)",
+    )
+    .bind(owner_id)
+    .bind(target_user_id)
+    .bind(chat_id)
+    .fetch_one(state.db.as_ref())
+    .await?;
+
+    let id: i64 = sqlx::query_scalar(
+        r#"
+        INSERT INTO watch_timers (owner_user_id, target_user_id, chat_id, timeout_seconds,
+                                  last_message_at, last_notified_at)
+        VALUES (?, ?, ?, ?, NULL, NULL)
+        ON CONFLICT (owner_user_id, target_user_id, chat_id) DO UPDATE SET
+            timeout_seconds = excluded.timeout_seconds,
+            last_notified_at = NULL,
+            updated_at = datetime('now')
+        RETURNING id
+        "#,
+    )
+    .bind(owner_id)
+    .bind(target_user_id)
+    .bind(chat_id)
+    .bind(timeout_seconds)
+    .fetch_one(state.db.as_ref())
+    .await?;
+
+    Ok((id, !already))
+}
+
+async fn delete_timer(state: &AppState, owner_id: i64, id: i64) -> anyhow::Result<bool> {
+    let rows = sqlx::query("DELETE FROM watch_timers WHERE id = ? AND owner_user_id = ?")
+        .bind(id)
+        .bind(owner_id)
+        .execute(state.db.as_ref())
+        .await?;
+    Ok(rows.rows_affected() > 0)
+}
