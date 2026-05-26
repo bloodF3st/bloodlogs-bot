@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use teloxide::{
     dispatching::{Dispatcher, UpdateFilterExt, UpdateHandler},
     prelude::*,
-    types::{AllowedUpdate, CallbackQuery, ChatKind, ChatMemberKind, ChatMemberUpdated, Me, Message, ParseMode, Update},
+    types::{AllowedUpdate, CallbackQuery, Me, Message, ParseMode, Update},
     update_listeners,
     utils::command::BotCommands,
     RequestError,
@@ -18,8 +18,6 @@ use teloxide::{
 
 use config::Config;
 use state::AppState;
-
-const ADMIN_CACHE_TTL: Duration = Duration::from_secs(300);
 
 #[derive(BotCommands, Clone, Debug)]
 #[command(rename_rule = "lowercase")]
@@ -34,6 +32,10 @@ enum Command {
     Btimers,
     #[command(description = "set log destination channel")]
     Bchannel(String),
+    #[command(description = "add chat to logging whitelist")]
+    Badd(String),
+    #[command(description = "remove chat from logging whitelist")]
+    Bdell(String),
     #[command(description = "command list")]
     Bhelp,
 }
@@ -45,39 +47,25 @@ async fn on_command(bot: Bot, msg: Message, cmd: Command, state: AppState) -> Re
         Command::Btimerclear => commands::btimerclear::handle(bot, msg, state).await,
         Command::Btimers => commands::btimers::handle(bot, msg, state).await,
         Command::Bchannel(args) => commands::bchannel::handle(bot, msg, args, state).await,
+        Command::Badd(args) => commands::badd::handle(bot, msg, args, state).await,
+        Command::Bdell(args) => commands::bdell::handle(bot, msg, args, state).await,
         Command::Bhelp => commands::bhelp::handle(bot, msg).await,
     }
 }
 
-async fn admin_in_chat(bot: &Bot, state: &AppState, chat_id: i64) -> bool {
-    {
-        let cache = state.chat_admin_cache.lock().await;
-        if let Some(&(is_admin, verified_at)) = cache.get(&chat_id) {
-            if verified_at.elapsed() < ADMIN_CACHE_TTL {
-                return is_admin;
-            }
-        }
-    }
-
-    let admin_user_id = UserId(state.admin_id() as u64);
-    let result = bot.get_chat_member(ChatId(chat_id), admin_user_id).await;
-
-    let is_member = match result {
-        Ok(member) => !matches!(
-            member.kind,
-            teloxide::types::ChatMemberKind::Left | teloxide::types::ChatMemberKind::Banned(_)
-        ),
-        Err(_) => false,
-    };
-
-    state.chat_admin_cache.lock().await.insert(chat_id, (is_member, Instant::now()));
-    is_member
-}
-
-async fn on_message(bot: Bot, msg: Message, state: AppState) -> ResponseResult<()> {
+async fn on_message(_bot: Bot, msg: Message, state: AppState) -> ResponseResult<()> {
     let chat_id = msg.chat.id.0;
 
-    if !admin_in_chat(&bot, &state, chat_id).await {
+    let in_whitelist = sqlx::query_scalar::<_, i64>(
+        "SELECT 1 FROM logged_chats WHERE chat_id = ?",
+    )
+    .bind(chat_id)
+    .fetch_optional(state.db.as_ref())
+    .await
+    .unwrap_or(None)
+    .is_some();
+
+    if !in_whitelist {
         return Ok(());
     }
 
@@ -110,50 +98,6 @@ async fn on_message(bot: Bot, msg: Message, state: AppState) -> ResponseResult<(
     Ok(())
 }
 
-async fn on_my_chat_member(bot: Bot, upd: ChatMemberUpdated, state: AppState) -> ResponseResult<()> {
-    let was_member = !matches!(
-        upd.old_chat_member.kind,
-        ChatMemberKind::Left | ChatMemberKind::Banned(_)
-    );
-    let is_member = !matches!(
-        upd.new_chat_member.kind,
-        ChatMemberKind::Left | ChatMemberKind::Banned(_)
-    );
-
-    if was_member || !is_member {
-        return Ok(());
-    }
-
-    let chat_id = upd.chat.id.0;
-    state.chat_admin_cache.lock().await.remove(&chat_id);
-
-    if !admin_in_chat(&bot, &state, chat_id).await {
-        return Ok(());
-    }
-
-    let chat_name = match &upd.chat.kind {
-        ChatKind::Public(p) => p.title.clone().unwrap_or_default(),
-        ChatKind::Private(_) => String::new(),
-    };
-
-    let chat_link = messages::chat_link_html(chat_id);
-    let html = if chat_name.is_empty() {
-        format!("{chat_link} ʟᴏɢɢɪɴɢ sᴛᴀʀᴛᴇᴅ")
-    } else {
-        format!(
-            "<b>{}</b> ʟᴏɢɢɪɴɢ sᴛᴀʀᴛᴇᴅ · {chat_link}",
-            messages::escape_html(&chat_name)
-        )
-    };
-
-    let _ = bot
-        .send_message(ChatId(state.admin_id()), &html)
-        .parse_mode(ParseMode::Html)
-        .await;
-
-    Ok(())
-}
-
 fn schema() -> UpdateHandler<RequestError> {
     let cmd_handler = Update::filter_message()
         .filter(|msg: Message, cfg: Arc<Config>| {
@@ -174,14 +118,11 @@ fn schema() -> UpdateHandler<RequestError> {
         })
         .endpoint(commands::btimers::handle_callback);
 
-    let join_handler = Update::filter_my_chat_member().endpoint(on_my_chat_member);
-
     let msg_handler = Update::filter_message().endpoint(on_message);
 
     dptree::entry()
         .branch(callback_handler)
         .branch(cmd_handler)
-        .branch(join_handler)
         .branch(msg_handler)
 }
 
@@ -276,7 +217,6 @@ async fn main() -> anyhow::Result<()> {
                     .allowed_updates(vec![
                         AllowedUpdate::Message,
                         AllowedUpdate::CallbackQuery,
-                        AllowedUpdate::MyChatMember,
                     ])
                     .build();
                 let mut dispatcher = Dispatcher::builder(bot.clone(), schema())
