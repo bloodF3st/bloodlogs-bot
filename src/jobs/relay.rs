@@ -21,7 +21,6 @@ pub async fn run(
     mut rx: UnboundedReceiver<String>,
 ) {
     while let Some(first) = rx.recv().await {
-        // Drain any queued messages into a batch
         let mut batch = vec![first];
         while batch.len() < BATCH_SIZE {
             match rx.try_recv() {
@@ -30,7 +29,6 @@ pub async fn run(
             }
         }
 
-        // Join batch, truncate if over Telegram limit
         let mut combined = batch.join(BATCH_SEPARATOR);
         if combined.len() > MAX_TG_LEN {
             combined.truncate(MAX_TG_LEN);
