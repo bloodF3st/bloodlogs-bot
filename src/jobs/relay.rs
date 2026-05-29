@@ -10,6 +10,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use crate::commands::bchannel::get_log_channel;
 
 const BATCH_SIZE: usize = 5;
+const BATCH_WINDOW: Duration = Duration::from_millis(800);
 const BATCH_SEPARATOR: &str = "\n\n";
 const MAX_TG_LEN: usize = 4000;
 const INTER_BATCH_DELAY: Duration = Duration::from_secs(3);
@@ -22,6 +23,7 @@ pub async fn run(
 ) {
     while let Some(first) = rx.recv().await {
         let mut batch = vec![first];
+        tokio::time::sleep(BATCH_WINDOW).await;
         while batch.len() < BATCH_SIZE {
             match rx.try_recv() {
                 Ok(msg) => batch.push(msg),

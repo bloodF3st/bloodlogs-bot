@@ -1,3 +1,15 @@
+const MSG_TRUNCATE_CHARS: usize = 135;
+
+fn truncate_msg(s: &str) -> String {
+    let mut chars = s.chars();
+    let truncated: String = chars.by_ref().take(MSG_TRUNCATE_CHARS).collect();
+    if chars.next().is_some() {
+        truncated + "…"
+    } else {
+        truncated
+    }
+}
+
 const HTTPS_TME_C: &str = concat!("https", "://t.me/c/");
 const TG_USER: &str = concat!("tg", "://user?id=");
 const TG_OPENMESSAGE: &str = concat!("tg", "://openmessage?chat_id=");
@@ -184,15 +196,15 @@ pub fn format_log_html(msg: &teloxide::types::Message) -> Option<String> {
                 }
             };
 
-            let text = msg.text().unwrap_or("");
-            let caption = msg.caption().unwrap_or("");
+            let text = truncate_msg(msg.text().unwrap_or(""));
+            let caption = truncate_msg(msg.caption().unwrap_or(""));
             let media_label = media_type_label(msg);
 
             let body = if !text.is_empty() {
-                format!("<blockquote>{}</blockquote>", escape_html(text))
+                format!("<blockquote>{}</blockquote>", escape_html(&text))
             } else if !caption.is_empty() {
                 let label = media_label.unwrap_or("ᴍᴇᴅɪᴀ");
-                format!("[{label}]\n<blockquote>{}</blockquote>", escape_html(caption))
+                format!("[{label}]\n<blockquote>{}</blockquote>", escape_html(&caption))
             } else if let Some(label) = media_label {
                 format!("[{label}]")
             } else {
