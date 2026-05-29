@@ -9,7 +9,10 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::commands::bchannel::get_log_channel;
 
-const INTER_MSG_DELAY: Duration = Duration::from_millis(100);
+const BATCH_SIZE: usize = 5;
+const BATCH_SEPARATOR: &str = "\n\n";
+const MAX_TG_LEN: usize = 4000;
+const INTER_BATCH_DELAY: Duration = Duration::from_secs(3);
 
 pub async fn run(
     bot: Bot,
@@ -17,7 +20,23 @@ pub async fn run(
     admin_id: i64,
     mut rx: UnboundedReceiver<String>,
 ) {
-    while let Some(html) = rx.recv().await {
+    while let Some(first) = rx.recv().await {
+        // Drain any queued messages into a batch
+        let mut batch = vec![first];
+        while batch.len() < BATCH_SIZE {
+            match rx.try_recv() {
+                Ok(msg) => batch.push(msg),
+                Err(_) => break,
+            }
+        }
+
+        // Join batch, truncate if over Telegram limit
+        let mut combined = batch.join(BATCH_SEPARATOR);
+        if combined.len() > MAX_TG_LEN {
+            combined.truncate(MAX_TG_LEN);
+            combined.push_str("\n…");
+        }
+
         let dest = match get_log_channel(pool.as_ref()).await {
             Ok(Some(id)) => id,
             _ => continue,
@@ -25,7 +44,7 @@ pub async fn run(
 
         loop {
             match bot
-                .send_message(ChatId(dest), &html)
+                .send_message(ChatId(dest), &combined)
                 .parse_mode(ParseMode::Html)
                 .await
             {
@@ -55,6 +74,6 @@ pub async fn run(
             }
         }
 
-        tokio::time::sleep(INTER_MSG_DELAY).await;
+        tokio::time::sleep(INTER_BATCH_DELAY).await;
     }
 }
