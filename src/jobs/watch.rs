@@ -232,7 +232,14 @@ async fn tick(bot: &Bot, pool: &SqlitePool, admin_id: i64) -> anyhow::Result<()>
             Ok(_) => {
                 send_ntfy(
                     "⏰ Таймер неактивности",
-                    &format!("timer #{}: {} | inactive ≥ {}", row.id, row.chat_id, threshold_fmt),
+                    &format!(
+                        "#{}: {} ({}) | {} | inactive ≥ {}",
+                        row.id,
+                        target_display.as_deref().unwrap_or("?"),
+                        row.target_user_id,
+                        chat_display.as_deref().unwrap_or(&row.chat_id.to_string()),
+                        threshold_fmt,
+                    ),
                 );
                 if let Err(e) = sqlx::query(
                     "UPDATE watch_timers SET last_notified_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
