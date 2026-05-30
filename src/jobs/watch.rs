@@ -10,6 +10,31 @@ use tracing::{info, warn};
 use crate::messages::{chat_link_html, escape_html, format_duration, user_link_html};
 use crate::state::AppState;
 
+fn send_ntfy(title: &str, body: &str) {
+    let url = match std::env::var("NTFY_URL") {
+        Ok(u) if !u.is_empty() => u,
+        _ => return,
+    };
+    let title = title.to_string();
+    let body = body.to_string();
+    tokio::spawn(async move {
+        tokio::task::spawn_blocking(move || {
+            let _ = std::process::Command::new("curl")
+                .args([
+                    "-s", "-m", "5",
+                    "-H", &format!("Title: {title}"),
+                    "-H", "Priority: default",
+                    "-H", "Tags: bell",
+                    "-d", &body,
+                    &url,
+                ])
+                .output();
+        })
+        .await
+        .ok();
+    });
+}
+
 const HTTPS_TME_C: &str = concat!("https", "://t.me/c/");
 
 #[derive(sqlx::FromRow)]
@@ -205,6 +230,10 @@ async fn tick(bot: &Bot, pool: &SqlitePool, admin_id: i64) -> anyhow::Result<()>
             .await
         {
             Ok(_) => {
+                send_ntfy(
+                    "⏰ Таймер неактивности",
+                    &format!("timer #{}: {} | inactive ≥ {}", row.id, row.chat_id, threshold_fmt),
+                );
                 if let Err(e) = sqlx::query(
                     "UPDATE watch_timers SET last_notified_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
                 )
