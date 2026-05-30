@@ -32,7 +32,10 @@ Telegram-бот для логирования сообщений и таймер
 BOT_TOKEN=123456:ABC-токен-из-BotFather
 ADMIN_ID=твой_числовой_telegram_id
 DATABASE_URL=sqlite:data/bloodlogs.db
+NTFY_URL=https://ntfy.sh/твой-топик
 ```
+
+`NTFY_URL` — опционально. Если задан — push-уведомления на iOS/Android через [ntfy.sh](https://ntfy.sh) при срабатывании таймеров неактивности.
 
 `ADMIN_ID` — числовой Telegram ID. Узнать можно у [@userinfobot](https://t.me/userinfobot).
 
@@ -163,6 +166,23 @@ sqlite3 bloodlogs.db 'SELECT value FROM bot_settings WHERE key="log_channel";'
 - **`.timer`** в blood-harvest — уведомления о сработавших таймерах приходят тебе в личку от этого бота
 
 Оба бота работают независимо. Если один недоступен — второй продолжает работу.
+
+## Push-уведомления (ntfy)
+
+Добавить в `.env`:
+
+```env
+NTFY_URL=https://ntfy.sh/твой-топик
+```
+
+При срабатывании таймера неактивности придёт push на устройство:
+
+```
+⏰ Таймер неактивности
+#3: Иван Петров (123456789) | MyGroup | inactive ≥ 2h
+```
+
+Установить приложение [ntfy](https://ntfy.sh) на iOS/Android и подписаться на свой топик.
 
 ## Уведомления
 
