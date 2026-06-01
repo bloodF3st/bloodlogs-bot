@@ -97,7 +97,7 @@ async fn on_message(_bot: Bot, msg: Message, state: AppState) -> ResponseResult<
     }
 
     if let Some(html) = messages::format_log_html(&msg) {
-        let _ = state.log_tx.send(html);
+        let _ = state.log_tx.try_send(html);
     }
 
     Ok(())
@@ -168,7 +168,7 @@ async fn main() -> anyhow::Result<()> {
 
     let pool = Arc::new(pool);
 
-    let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let (log_tx, log_rx) = tokio::sync::mpsc::channel::<String>(256);
     let state = AppState::new(pool, cfg.clone(), log_tx);
 
     let bot = Bot::new(cfg.bot_token.clone());

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
 
 use crate::config::Config;
 
@@ -9,11 +9,11 @@ use crate::config::Config;
 pub struct AppState {
     pub db: Arc<SqlitePool>,
     pub cfg: Arc<Config>,
-    pub log_tx: UnboundedSender<String>,
+    pub log_tx: Sender<String>,
 }
 
 impl AppState {
-    pub fn new(db: Arc<SqlitePool>, cfg: Arc<Config>, log_tx: UnboundedSender<String>) -> Self {
+    pub fn new(db: Arc<SqlitePool>, cfg: Arc<Config>, log_tx: Sender<String>) -> Self {
         Self {
             db,
             cfg,

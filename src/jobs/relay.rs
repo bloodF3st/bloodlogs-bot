@@ -5,7 +5,7 @@ use sqlx::SqlitePool;
 use teloxide::prelude::*;
 use teloxide::types::ParseMode;
 use teloxide::RequestError;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::Receiver;
 
 use crate::commands::bchannel::get_log_channel;
 
@@ -19,7 +19,7 @@ pub async fn run(
     bot: Bot,
     pool: Arc<SqlitePool>,
     admin_ids: Vec<i64>,
-    mut rx: UnboundedReceiver<String>,
+    mut rx: Receiver<String>,
 ) {
     while let Some(first) = rx.recv().await {
         let mut batch = vec![first];
@@ -33,7 +33,8 @@ pub async fn run(
 
         let mut combined = batch.join(BATCH_SEPARATOR);
         if combined.len() > MAX_TG_LEN {
-            combined.truncate(MAX_TG_LEN);
+            let cut = (0..=MAX_TG_LEN).rev().find(|&i| combined.is_char_boundary(i)).unwrap_or(0);
+            combined.truncate(cut);
             combined.push_str("\n…");
         }
 
