@@ -161,7 +161,7 @@ async fn resolve_display_names(
     (fetched_target.or(target), fetched_chat.or(chat))
 }
 
-async fn tick(bot: &Bot, pool: &SqlitePool, admin_id: i64) -> anyhow::Result<()> {
+async fn tick(bot: &Bot, pool: &SqlitePool, admin_ids: &[i64], notify_chat_id: Option<i64>) -> anyhow::Result<()> {
     let rows: Vec<WatchRow> = tokio::time::timeout(
         Duration::from_secs(25),
         sqlx::query_as::<_, WatchRow>(
@@ -224,35 +224,57 @@ async fn tick(bot: &Bot, pool: &SqlitePool, admin_id: i64) -> anyhow::Result<()>
             id = row.id,
         );
 
-        match bot
-            .send_message(ChatId(admin_id), &html)
-            .parse_mode(ParseMode::Html)
-            .await
-        {
-            Ok(_) => {
-                send_ntfy(
-                    "⏰ Таймер неактивности",
-                    &format!(
-                        "#{}: {} ({}) | {} | inactive ≥ {}",
-                        row.id,
-                        target_display.as_deref().unwrap_or("?"),
-                        row.target_user_id,
-                        chat_display.as_deref().unwrap_or(&row.chat_id.to_string()),
-                        threshold_fmt,
-                    ),
-                );
-                if let Err(e) = sqlx::query(
-                    "UPDATE watch_timers SET last_notified_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
-                )
-                .bind(row.id)
-                .execute(pool)
+        let mut notified = false;
+        for &aid in admin_ids {
+            match bot
+                .send_message(ChatId(aid), &html)
+                .parse_mode(ParseMode::Html)
                 .await
-                {
-                    warn!("watch #{}: failed to set last_notified_at: {e}", row.id);
+            {
+                Ok(_) => { notified = true; }
+                Err(e) => {
+                    warn!("watch #{}: failed to notify admin {aid}: {e}", row.id);
                 }
             }
-            Err(e) => {
-                warn!("watch #{}: failed to notify: {e}", row.id);
+        }
+        if notified {
+            send_ntfy(
+                "⏰ Таймер неактивности",
+                &format!(
+                    "#{}: {} ({}) | {} | inactive ≥ {}",
+                    row.id,
+                    target_display.as_deref().unwrap_or("?"),
+                    row.target_user_id,
+                    chat_display.as_deref().unwrap_or(&row.chat_id.to_string()),
+                    threshold_fmt,
+                ),
+            );
+            if let Err(e) = sqlx::query(
+                "UPDATE watch_timers SET last_notified_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+            )
+            .bind(row.id)
+            .execute(pool)
+            .await
+            {
+                warn!("watch #{}: failed to set last_notified_at: {e}", row.id);
+            }
+        }
+
+        // Отправляем уведомление в notify_chat и закрепляем
+        if let Some(nchat) = notify_chat_id {
+            match bot
+                .send_message(ChatId(nchat), &html)
+                .parse_mode(ParseMode::Html)
+                .await
+            {
+                Ok(sent) => {
+                    if let Err(e) = bot.pin_chat_message(ChatId(nchat), sent.id).await {
+                        warn!("watch #{}: failed to pin in notify_chat {nchat}: {e}", row.id);
+                    }
+                }
+                Err(e) => {
+                    warn!("watch #{}: failed to send to notify_chat {nchat}: {e}", row.id);
+                }
             }
         }
     }
@@ -307,18 +329,18 @@ pub async fn on_message(pool: &SqlitePool, msg: &teloxide::types::Message) -> an
     Ok(())
 }
 
-async fn tick_loop(bot: Bot, pool: Arc<SqlitePool>, admin_id: i64) {
+async fn tick_loop(bot: Bot, pool: Arc<SqlitePool>, admin_ids: Vec<i64>, notify_chat_id: Option<i64>) {
     let mut intv = tokio::time::interval(Duration::from_secs(30));
     intv.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         intv.tick().await;
-        if let Err(e) = tick(&bot, pool.as_ref(), admin_id).await {
+        if let Err(e) = tick(&bot, pool.as_ref(), &admin_ids, notify_chat_id).await {
             warn!("watch tick: {e:#}");
         }
     }
 }
 
-async fn watch_supervised(bot: Bot, pool: Arc<SqlitePool>, admin_id: i64) {
+async fn watch_supervised(bot: Bot, pool: Arc<SqlitePool>, admin_ids: Vec<i64>, notify_chat_id: Option<i64>) {
     info!("watch: supervisor started (interval 30s, watchdog 45s)");
     let mut checker: Option<tokio::task::JoinHandle<()>> = None;
     let mut watchdog = tokio::time::interval(Duration::from_secs(45));
@@ -337,13 +359,15 @@ async fn watch_supervised(bot: Bot, pool: Arc<SqlitePool>, admin_id: i64) {
             }
             let b = bot.clone();
             let p = pool.clone();
-            checker = Some(tokio::spawn(async move { tick_loop(b, p, admin_id).await }));
+            let ids = admin_ids.clone();
+            checker = Some(tokio::spawn(async move { tick_loop(b, p, ids, notify_chat_id).await }));
         }
     }
 }
 
 pub fn spawn_watch_supervisor(bot: Bot, state: &AppState) -> tokio::task::JoinHandle<()> {
     let pool = state.db.clone();
-    let admin_id = state.admin_id();
-    tokio::spawn(async move { watch_supervised(bot, pool, admin_id).await })
+    let admin_ids = state.admin_ids().to_vec();
+    let notify_chat_id = state.cfg.notify_chat_id;
+    tokio::spawn(async move { watch_supervised(bot, pool, admin_ids, notify_chat_id).await })
 }

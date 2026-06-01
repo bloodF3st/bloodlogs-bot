@@ -18,7 +18,7 @@ const INTER_BATCH_DELAY: Duration = Duration::from_secs(3);
 pub async fn run(
     bot: Bot,
     pool: Arc<SqlitePool>,
-    admin_id: i64,
+    admin_ids: Vec<i64>,
     mut rx: UnboundedReceiver<String>,
 ) {
     while let Some(first) = rx.recv().await {
@@ -60,14 +60,16 @@ pub async fn run(
                     let err_str = e.to_string();
                     tracing::warn!("log relay to {dest}: {err_str}");
                     if err_str.contains("Forbidden") || err_str.contains("chat not found") {
-                        let _ = bot
-                            .send_message(
-                                ChatId(admin_id),
-                                &format!(
-                                    "ʟᴏɢ ᴄʜᴀɴɴᴇʟ {dest} ᴜɴʀᴇᴀᴄʜᴀʙʟᴇ: {err_str}\nᴜsᴇ /bchannel ᴛᴏ ʀᴇsᴇᴛ."
-                                ),
-                            )
-                            .await;
+                        for &aid in &admin_ids {
+                            let _ = bot
+                                .send_message(
+                                    ChatId(aid),
+                                    &format!(
+                                        "ʟᴏɢ ᴄʜᴀɴɴᴇʟ {dest} ᴜɴʀᴇᴀᴄʜᴀʙʟᴇ: {err_str}\nᴜsᴇ /bchannel ᴛᴏ ʀᴇsᴇᴛ."
+                                    ),
+                                )
+                                .await;
+                        }
                     }
                     break;
                 }

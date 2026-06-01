@@ -21,7 +21,11 @@ impl AppState {
         }
     }
 
-    pub fn admin_id(&self) -> i64 {
-        self.cfg.admin_id
+    pub fn admin_ids(&self) -> &[i64] {
+        &self.cfg.admin_ids
+    }
+
+    pub fn is_admin(&self, uid: i64) -> bool {
+        self.cfg.is_admin(uid)
     }
 }

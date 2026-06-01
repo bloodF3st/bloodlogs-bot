@@ -107,7 +107,7 @@ fn schema() -> UpdateHandler<RequestError> {
     let cmd_handler = Update::filter_message()
         .filter(|msg: Message, cfg: Arc<Config>| {
             msg.from()
-                .map_or(false, |u| u.id.0 == cfg.admin_id as u64)
+                .map_or(false, |u| cfg.is_admin(u.id.0 as i64))
         })
         .filter_map(|msg: Message, me: Me| {
             let text = msg.text()?;
@@ -118,7 +118,7 @@ fn schema() -> UpdateHandler<RequestError> {
 
     let callback_handler = Update::filter_callback_query()
         .filter(|q: CallbackQuery, cfg: Arc<Config>| {
-            q.from.id.0 == cfg.admin_id as u64
+            cfg.is_admin(q.from.id.0 as i64)
                 && q.data.as_deref().map_or(false, |d| d.starts_with("btimers:"))
         })
         .endpoint(commands::btimers::handle_callback);
@@ -177,11 +177,11 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(jobs::relay::run(
         bot.clone(),
         state.db.clone(),
-        state.admin_id(),
+        state.admin_ids().to_vec(),
         log_rx,
     ));
 
-    let admin_chat = ChatId(cfg.admin_id);
+    let admin_chat = ChatId(*cfg.admin_ids.first().expect("at least one admin_id required"));
 
     let flag_path = {
         let url = cfg.database_url.strip_prefix("sqlite:").unwrap_or("data/bloodlogs.db");
@@ -204,7 +204,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("startup notify: {e}");
     }
 
-    tracing::info!("bloodLogs: long poll, admin_id={}", cfg.admin_id);
+    tracing::info!("bloodLogs: long poll, admin_ids={:?}", cfg.admin_ids);
 
     const MAX_RECONNECTS: usize = 5;
     const RECONNECT_WINDOW: Duration = Duration::from_secs(60);
