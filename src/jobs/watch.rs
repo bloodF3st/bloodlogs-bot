@@ -7,7 +7,7 @@ use teloxide::prelude::*;
 use teloxide::types::{ChatId, ChatKind, ParseMode, UserId};
 use tracing::{info, warn};
 
-use crate::messages::{chat_link_html, escape_html, format_duration, user_link_html};
+use crate::messages::{chat_link_html, escape_html, format_duration};
 use crate::state::AppState;
 
 fn send_ntfy(title: &str, body: &str) {
@@ -66,7 +66,7 @@ fn user_html(id: i64, display: Option<&str>) -> String {
             "<a href=\"tg://user?id={id}\">{}</a> <code>{id}</code>",
             escape_html(name)
         ),
-        None => user_link_html(id),
+        None => format!("<code>{id}</code>"),
     }
 }
 

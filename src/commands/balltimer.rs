@@ -83,7 +83,8 @@ pub async fn handle(bot: Bot, msg: Message, args: String, state: AppState) -> Re
             INSERT INTO watch_timers (owner_user_id, target_user_id, chat_id, timeout_seconds,
                                       last_message_at, last_notified_at)
             VALUES (?, ?, ?, ?, NULL, NULL)
-            ON CONFLICT (owner_user_id, target_user_id, chat_id) DO UPDATE SET
+            ON CONFLICT (target_user_id, chat_id) DO UPDATE SET
+                owner_user_id    = excluded.owner_user_id,
                 timeout_seconds  = excluded.timeout_seconds,
                 last_notified_at = NULL,
                 updated_at       = datetime('now')

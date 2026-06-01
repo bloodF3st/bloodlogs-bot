@@ -32,16 +32,23 @@ pub async fn handle(bot: Bot, msg: Message, args: String, state: AppState) -> Re
             return Ok(());
         }
         let id: i64 = rest.parse().unwrap_or(0);
-        match delete_timer(&state, owner_id, id).await {
-            Ok(true) => {
-                send_html(&bot, msg.chat.id, &format!("ᴛɪᴍᴇʀ {id} ᴅᴇʟᴇᴛᴇᴅ.")).await;
+        match delete_timer(&state, id).await {
+            Ok(Some((target_user_id, chat_id))) => {
+                let user_link = user_link_html(target_user_id);
+                let chat_link = chat_link_html(chat_id);
+                send_html(
+                    &bot,
+                    msg.chat.id,
+                    &format!("ᴛɪᴍᴇʀ #{id} ᴅᴇʟᴇᴛᴇᴅ · {user_link} | {chat_link}"),
+                )
+                .await;
             }
-            Ok(false) => {
+            Ok(None) => {
                 send_html(&bot, msg.chat.id, "ᴛɪᴍᴇʀ ɴᴏᴛ ғᴏᴜɴᴅ.").await;
             }
             Err(e) => {
                 tracing::warn!("btimer del db: {e:#}");
-                send_html(&bot, msg.chat.id, "ᴛɪᴍᴇʀ ɴᴏᴛ ғᴏᴜɴᴅ.").await;
+                send_html(&bot, msg.chat.id, "ᴅʙ ᴇʀʀᴏʀ.").await;
             }
         }
         return Ok(());
@@ -132,9 +139,8 @@ async fn upsert_timer(
     timeout_seconds: i64,
 ) -> anyhow::Result<(i64, bool)> {
     let already: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM watch_timers WHERE owner_user_id = ? AND target_user_id = ? AND chat_id = ?)",
+        "SELECT EXISTS(SELECT 1 FROM watch_timers WHERE target_user_id = ? AND chat_id = ?)",
     )
-    .bind(owner_id)
     .bind(target_user_id)
     .bind(chat_id)
     .fetch_one(state.db.as_ref())
@@ -145,7 +151,8 @@ async fn upsert_timer(
         INSERT INTO watch_timers (owner_user_id, target_user_id, chat_id, timeout_seconds,
                                   last_message_at, last_notified_at)
         VALUES (?, ?, ?, ?, NULL, NULL)
-        ON CONFLICT (owner_user_id, target_user_id, chat_id) DO UPDATE SET
+        ON CONFLICT (target_user_id, chat_id) DO UPDATE SET
+            owner_user_id = excluded.owner_user_id,
             timeout_seconds = excluded.timeout_seconds,
             last_notified_at = NULL,
             updated_at = datetime('now')
@@ -162,11 +169,12 @@ async fn upsert_timer(
     Ok((id, !already))
 }
 
-async fn delete_timer(state: &AppState, owner_id: i64, id: i64) -> anyhow::Result<bool> {
-    let rows = sqlx::query("DELETE FROM watch_timers WHERE id = ? AND owner_user_id = ?")
-        .bind(id)
-        .bind(owner_id)
-        .execute(state.db.as_ref())
-        .await?;
-    Ok(rows.rows_affected() > 0)
+async fn delete_timer(state: &AppState, id: i64) -> anyhow::Result<Option<(i64, i64)>> {
+    let row: Option<(i64, i64)> = sqlx::query_as(
+        "DELETE FROM watch_timers WHERE id = ? RETURNING target_user_id, chat_id",
+    )
+    .bind(id)
+    .fetch_optional(state.db.as_ref())
+    .await?;
+    Ok(row)
 }
