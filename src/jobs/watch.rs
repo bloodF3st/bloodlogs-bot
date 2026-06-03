@@ -58,14 +58,10 @@ fn fmt_datetime_msk(dt: DateTime<Utc>) -> String {
     dt.with_timezone(&msk).format("%Y-%m-%d %H:%M MSK").to_string()
 }
 
-/// `<a href="tg://user?id=X">Name</a> <code>X</code>`
-/// или просто `<a href="...">X</a>` если имя неизвестно.
+/// `Name <code>X</code>` — без tg:// ссылок (не работают в группах через Bot API)
 fn user_html(id: i64, display: Option<&str>) -> String {
     match display.map(str::trim).filter(|s| !s.is_empty()) {
-        Some(name) => format!(
-            "<a href=\"tg://user?id={id}\">{}</a> <code>{id}</code>",
-            escape_html(name)
-        ),
+        Some(name) => format!("{} <code>{id}</code>", escape_html(name)),
         None => format!("<code>{id}</code>"),
     }
 }
@@ -196,7 +192,7 @@ async fn notify_bot_access_lost(
             let chat_id_str = chat_id.to_string();
             let chat_label = chat_title.unwrap_or(&chat_id_str);
             send_ntfy(
-                "🚫 Бот кикнут из чата",
+                "Бот кикнут из чата",
                 &format!("Бот кикнут из чата {chat_label} ({chat_id}). Активных таймеров: {timer_count}"),
             );
         }
@@ -407,7 +403,7 @@ async fn tick(bot: &Bot, pool: &SqlitePool, admin_ids: &[i64], notify_chat_id: O
         }
         if notified {
             send_ntfy(
-                "⏰ Таймер неактивности",
+                "Таймер неактивности",
                 &format!(
                     "#{}: {} ({}) | {} | inactive ≥ {}",
                     row.id,
