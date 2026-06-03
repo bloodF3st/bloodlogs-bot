@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use teloxide::{
     dispatching::{Dispatcher, UpdateFilterExt, UpdateHandler},
     prelude::*,
-    types::{AllowedUpdate, CallbackQuery, Me, Message, ParseMode, Update},
+    types::{AllowedUpdate, CallbackQuery, ChatMemberUpdated, Me, Message, ParseMode, Update},
     update_listeners,
     utils::command::BotCommands,
     RequestError,
@@ -40,6 +40,15 @@ enum Command {
     Btimerdel(String),
     #[command(description = "command list")]
     Bhelp,
+}
+
+async fn on_my_chat_member(
+    bot: Bot,
+    upd: ChatMemberUpdated,
+    state: AppState,
+) -> ResponseResult<()> {
+    jobs::watch::on_my_chat_member(bot, upd, state.db.clone(), state.admin_ids().to_vec()).await;
+    Ok(())
 }
 
 async fn on_command(bot: Bot, msg: Message, cmd: Command, state: AppState) -> ResponseResult<()> {
@@ -125,9 +134,13 @@ fn schema() -> UpdateHandler<RequestError> {
 
     let msg_handler = Update::filter_message().endpoint(on_message);
 
+    let my_chat_member_handler = Update::filter_my_chat_member()
+        .endpoint(on_my_chat_member);
+
     dptree::entry()
         .branch(callback_handler)
         .branch(cmd_handler)
+        .branch(my_chat_member_handler)
         .branch(msg_handler)
 }
 
@@ -222,6 +235,7 @@ async fn main() -> anyhow::Result<()> {
                     .allowed_updates(vec![
                         AllowedUpdate::Message,
                         AllowedUpdate::CallbackQuery,
+                        AllowedUpdate::MyChatMember,
                     ])
                     .build();
                 let mut dispatcher = Dispatcher::builder(bot.clone(), schema())

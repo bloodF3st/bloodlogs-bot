@@ -122,6 +122,21 @@ pub async fn handle(bot: Bot, msg: Message, args: String, state: AppState) -> Re
                 )
                 .await;
             }
+
+            // Сразу проверяем доступ к целевому чату
+            if let Err(e) = bot.get_chat(ChatId(chat_id)).await {
+                let s = e.to_string();
+                if s.contains("Forbidden") || s.contains("bot is not a member")
+                    || s.contains("chat not found") || s.contains("not enough rights")
+                {
+                    send_html(
+                        &bot,
+                        msg.chat.id,
+                        &format!("⚠️ ᴛɪᴍᴇʀ sᴇᴛ, ʙᴜᴛ ʙᴏᴛ ɪs ɴᴏᴛ ᴀ ᴍᴇᴍʙᴇʀ ᴏғ {chat_link}.\nᴀᴅᴅ ᴛʜᴇ ʙᴏᴛ ᴛᴏ ᴛʜᴀᴛ ᴄʜᴀᴛ ᴛᴏ ᴛʀᴀᴄᴋ ᴀᴄᴛɪᴠɪᴛʏ."),
+                    )
+                    .await;
+                }
+            }
         }
         Err(e) => {
             tracing::warn!("btimer upsert db: {e:#}");

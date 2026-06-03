@@ -4,7 +4,7 @@ use std::time::Duration;
 use chrono::{DateTime, FixedOffset, Utc};
 use sqlx::SqlitePool;
 use teloxide::prelude::*;
-use teloxide::types::{ChatId, ChatKind, ParseMode, UserId};
+use teloxide::types::{ChatId, ChatKind, ChatMemberKind, ChatMemberUpdated, ParseMode, UserId};
 use tracing::{info, warn};
 
 use crate::messages::{chat_link_html, escape_html, format_duration};
@@ -161,6 +161,174 @@ async fn resolve_display_names(
     (fetched_target.or(target), fetched_chat.or(chat))
 }
 
+fn is_bot_access_error(e: &teloxide::RequestError) -> bool {
+    let s = e.to_string();
+    s.contains("Forbidden") || s.contains("bot is not a member") || s.contains("chat not found")
+        || s.contains("CHAT_WRITE_FORBIDDEN") || s.contains("not enough rights")
+}
+
+async fn notify_bot_access_lost(
+    bot: &Bot,
+    pool: &SqlitePool,
+    admin_ids: &[i64],
+    chat_id: i64,
+    chat_title: Option<&str>,
+    reason: &str,
+    timer_count: i64,
+    with_ntfy: bool,
+) {
+    let chat_h = chat_html(chat_id, chat_title);
+    let reason_label = if reason == "kicked" { "ᴋɪᴄᴋᴇᴅ" } else { "ɴᴏᴛ ᴀ ᴍᴇᴍʙᴇʀ" };
+    let html = format!(
+        "ʙᴏᴛ ɴᴏ ᴀᴄᴄᴇss · {chat_h} · {reason_label}\nᴛɪᴍᴇʀs: {timer_count}",
+    );
+
+    let mut notified = false;
+    for &aid in admin_ids {
+        match bot.send_message(ChatId(aid), &html).parse_mode(ParseMode::Html).await {
+            Ok(_) => { notified = true; }
+            Err(e) => warn!("bot_access notify admin {aid}: {e}"),
+        }
+    }
+
+    if notified {
+        if with_ntfy {
+            let chat_id_str = chat_id.to_string();
+            let chat_label = chat_title.unwrap_or(&chat_id_str);
+            send_ntfy(
+                "🚫 Бот кикнут из чата",
+                &format!("Бот кикнут из чата {chat_label} ({chat_id}). Активных таймеров: {timer_count}"),
+            );
+        }
+
+        let _ = sqlx::query(
+            "INSERT INTO bot_inaccessible_chats (chat_id, reason, notified_at) \
+             VALUES (?, ?, datetime('now')) \
+             ON CONFLICT(chat_id) DO UPDATE SET notified_at = datetime('now'), reason = excluded.reason",
+        )
+        .bind(chat_id)
+        .bind(reason)
+        .execute(pool)
+        .await;
+    }
+}
+
+async fn check_bot_access(bot: &Bot, pool: &SqlitePool, admin_ids: &[i64]) -> anyhow::Result<()> {
+    let chat_ids: Vec<(i64,)> = sqlx::query_as(
+        "SELECT DISTINCT chat_id FROM watch_timers",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    for (chat_id,) in chat_ids {
+        // Уже уведомляли — пропускаем до следующего сброса (возврат бота)
+        let already: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM bot_inaccessible_chats WHERE chat_id = ? AND notified_at IS NOT NULL)",
+        )
+        .bind(chat_id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(false);
+        if already {
+            continue;
+        }
+
+        match bot.get_chat(ChatId(chat_id)).await {
+            Ok(_) => {
+                // Доступ есть — если был помечен как недоступный, убираем
+                let _ = sqlx::query(
+                    "DELETE FROM bot_inaccessible_chats WHERE chat_id = ?",
+                )
+                .bind(chat_id)
+                .execute(pool)
+                .await;
+            }
+            Err(e) if is_bot_access_error(&e) => {
+                let timer_count: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM watch_timers WHERE chat_id = ?",
+                )
+                .bind(chat_id)
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
+                if timer_count == 0 {
+                    continue;
+                }
+                let chat_display: Option<String> = sqlx::query_scalar(
+                    "SELECT chat_display FROM watch_timers WHERE chat_id = ? LIMIT 1",
+                )
+                .bind(chat_id)
+                .fetch_optional(pool)
+                .await
+                .unwrap_or(None)
+                .flatten();
+                notify_bot_access_lost(
+                    bot, pool, admin_ids, chat_id,
+                    chat_display.as_deref(), "not_member", timer_count, false,
+                ).await;
+            }
+            Err(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// Вызывается из main при получении MyChatMember апдейта.
+pub async fn on_my_chat_member(
+    bot: Bot,
+    upd: ChatMemberUpdated,
+    pool: Arc<SqlitePool>,
+    admin_ids: Vec<i64>,
+) {
+    let chat_id = upd.chat.id.0;
+    match upd.new_chat_member.kind {
+        ChatMemberKind::Left | ChatMemberKind::Banned(_) => {
+            let timer_count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM watch_timers WHERE chat_id = ?",
+            )
+            .bind(chat_id)
+            .fetch_one(pool.as_ref())
+            .await
+            .unwrap_or(0);
+
+            if timer_count == 0 {
+                return;
+            }
+
+            let already: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM bot_inaccessible_chats WHERE chat_id = ? AND notified_at IS NOT NULL)",
+            )
+            .bind(chat_id)
+            .fetch_one(pool.as_ref())
+            .await
+            .unwrap_or(false);
+            if already {
+                return;
+            }
+
+            let chat_title = upd.chat.title().map(str::to_string);
+            let reason = match upd.new_chat_member.kind {
+                ChatMemberKind::Banned(_) => "kicked",
+                _ => "left",
+            };
+            notify_bot_access_lost(
+                &bot, pool.as_ref(), &admin_ids, chat_id,
+                chat_title.as_deref(), reason, timer_count, true,
+            ).await;
+        }
+        // Бот возвращён в чат — сбрасываем флаг
+        ChatMemberKind::Member | ChatMemberKind::Administrator(_) | ChatMemberKind::Owner(_) => {
+            let _ = sqlx::query(
+                "DELETE FROM bot_inaccessible_chats WHERE chat_id = ?",
+            )
+            .bind(chat_id)
+            .execute(pool.as_ref())
+            .await;
+        }
+        _ => {}
+    }
+}
+
 async fn tick(bot: &Bot, pool: &SqlitePool, admin_ids: &[i64], notify_chat_id: Option<i64>) -> anyhow::Result<()> {
     let rows: Vec<WatchRow> = tokio::time::timeout(
         Duration::from_secs(25),
@@ -278,6 +446,11 @@ async fn tick(bot: &Bot, pool: &SqlitePool, admin_ids: &[i64], notify_chat_id: O
             }
         }
     }
+
+    if let Err(e) = check_bot_access(bot, pool, admin_ids).await {
+        warn!("check_bot_access: {e:#}");
+    }
+
     Ok(())
 }
 
